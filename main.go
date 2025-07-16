@@ -60,7 +60,8 @@ func printMenu() {
 	fmt.Printf("│ [%s] %-34s │\n", color.GreenString("4"), "Add New Database")
 	fmt.Printf("│ [%s] %-34s │\n", color.GreenString("5"), "Add New User")
 	fmt.Printf("│ [%s] %-34s │\n", color.GreenString("6"), "Get Database Info")
-	fmt.Printf("│ [%s] %-34s │\n", color.RedString("7"), "Exit")
+	fmt.Printf("│ [%s] %-34s │\n", color.GreenString("7"), "Get Connection URI")
+	fmt.Printf("│ [%s] %-34s │\n", color.RedString("8"), "Exit")
 	yellow.Println("└───────────────────────────────────────────┘")
 }
 
@@ -84,6 +85,8 @@ func handleUserInput() {
 	case "6":
 		getDatabaseInfo()
 	case "7":
+		getConnectionURI()
+	case "8":
 		printSuccess("Exiting. Goodbye!")
 		os.Exit(0)
 	default:
@@ -199,20 +202,21 @@ func viewLogs() {
 	}
 }
 
-func listDatabasesForUser() {
+func listDatabasesForUser() (string, error) {
 	printInfo("Fetching available databases...")
 	listScript := `db.adminCommand({ listDatabases: 1 }).databases.forEach(db => { if(db.name !== 'local' && db.name !== 'config') print(db.name) });`
 	dbList, err := executeAndCaptureCommand("docker", "exec", containerName, "mongosh", "--quiet", "--eval", listScript)
 	if err != nil {
 		printError(fmt.Sprintf("Could not fetch database list: %v", err))
-		return
+		return "", err
 	}
 	if strings.TrimSpace(dbList) == "" {
 		color.New(color.FgYellow).Println("No user-created databases found yet. 'admin' is always available.")
 	} else {
-		color.New(color.FgYellow).Println("Available databases to add a user to:")
+		color.New(color.FgYellow).Println("Available databases:")
 		fmt.Println(dbList)
 	}
+	return dbList, nil
 }
 
 func addNewUser() {
@@ -242,10 +246,10 @@ func addNewUser() {
 		return
 	}
 
-	mongoCommand := fmt.Sprintf(`db.getSiblingDB('%s').createUser({ user: '%s', pwd: '%s', roles: [{ role: 'readWrite', db: '%s' }] })`, db, username, password, db)
+	mongoCommand := fmt.Sprintf(`db.createUser({ user: '%s', pwd: '%s', roles: [{ role: 'readWrite', db: '%s' }] })`, username, password, db)
 
 	printInfo("Adding new user...")
-	err := executeCommand("docker", "exec", "-i", containerName, "mongosh", "--quiet", "--eval", mongoCommand)
+	err := executeCommand("docker", "exec", "-i", containerName, "mongosh", db, "--quiet", "--eval", mongoCommand)
 	if err != nil {
 		printError(fmt.Sprintf("Failed to add user: %v", err))
 		return
@@ -269,10 +273,10 @@ func addNewDatabase() {
 		return
 	}
 
-	mongoCommand := fmt.Sprintf(`db.getSiblingDB('%s').createCollection('initial_collection')`, dbName)
+	mongoCommand := `db.createCollection('initial_collection')`
 
 	printInfo(fmt.Sprintf("Creating database '%s'...", dbName))
-	err := executeCommand("docker", "exec", "-i", containerName, "mongosh", "--quiet", "--eval", mongoCommand)
+	err := executeCommand("docker", "exec", "-i", containerName, "mongosh", dbName, "--quiet", "--eval", mongoCommand)
 	if err != nil {
 		printError(fmt.Sprintf("Failed to create database: %v", err))
 		return
@@ -286,13 +290,11 @@ func getDatabaseInfo() {
 		return
 	}
 	printInfo("Fetching information for all databases...")
-	color.New(color.FgYellow).Println("Note: Passwords are encrypted and cannot be displayed.")
 
 	mongoScript := `
 		const dbs = db.adminCommand({ listDatabases: 1 }).databases;
 		dbs.forEach(dbInfo => {
 			if (dbInfo.name === 'local' || dbInfo.name === 'config') return;
-
 			const currentDb = db.getSiblingDB(dbInfo.name);
 			
 			print("\n========================================================");
@@ -301,7 +303,7 @@ func getDatabaseInfo() {
 
 			print("\n--- USERS ---");
 			const users = currentDb.getUsers();
-			if (users.length > 0) {
+			if (users && users.length > 0) {
 				printjson(users);
 			} else {
 				print("No users found in this database.");
@@ -319,4 +321,50 @@ func getDatabaseInfo() {
 		return
 	}
 	printSuccess("Finished retrieving database information.")
+}
+
+func getConnectionURI() {
+	if !isContainerRunning() {
+		printError("MongoDB container is not running. Please start it first.")
+		return
+	}
+
+	printInfo("Fetching all users...")
+	listUsersScript := `db.getSiblingDB('admin').system.users.find().forEach(u => print(u.user));`
+	userList, err := executeAndCaptureCommand("docker", "exec", containerName, "mongosh", "--quiet", "--eval", listUsersScript)
+	if err != nil {
+		printError(fmt.Sprintf("Could not fetch user list: %v", err))
+		return
+	}
+	if strings.TrimSpace(userList) == "" {
+		printError("No users found. Please add a user first.")
+		return
+	}
+	color.New(color.FgYellow).Println("Available users:")
+	fmt.Println(userList)
+
+	listDatabasesForUser()
+
+	reader := bufio.NewReader(os.Stdin)
+
+	color.New(color.FgHiWhite).Print("\nEnter user from the list above: ")
+	user, _ := reader.ReadString('\n')
+	user = strings.TrimSpace(user)
+
+	color.New(color.FgHiWhite).Print("Enter password for user '" + user + "': ")
+	password, _ := reader.ReadString('\n')
+	password = strings.TrimSpace(password)
+
+	color.New(color.FgHiWhite).Print("Enter database to connect to: ")
+	db, _ := reader.ReadString('\n')
+	db = strings.TrimSpace(db)
+
+	if user == "" || password == "" || db == "" {
+		printError("User, password, and database cannot be empty.")
+		return
+	}
+
+	uri := fmt.Sprintf("mongodb://%s:%s@localhost:27017/%s", user, password, db)
+	printSuccess("Your connection URI is:")
+	color.New(color.FgCyan, color.Bold).Println(uri)
 }
