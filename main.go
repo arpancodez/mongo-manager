@@ -11,21 +11,23 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/fatih/color"
+	"github.com/fatih/color" // Used for colorful CLI output
 )
 
 const (
-	containerName = "my-mongodb"
-	imageName     = "mongo:latest"
+	containerName = "my-mongodb"  // Default container name
+	imageName     = "mongo:latest" // MongoDB Docker image
 )
 
 func main() {
+	// Infinite loop to show menu until user exits
 	for {
 		printMenu()
 		handleUserInput()
 	}
 }
 
+// clearScreen clears the terminal screen depending on the OS.
 func clearScreen() {
 	if runtime.GOOS == "windows" {
 		cmd := exec.Command("cmd", "/c", "cls")
@@ -38,8 +40,11 @@ func clearScreen() {
 	}
 }
 
+// printMenu displays the main menu with options.
 func printMenu() {
 	clearScreen()
+
+	// ASCII banner
 	cyan := color.New(color.FgCyan, color.Bold)
 	cyan.Println(" ██████╗ ██████╗ ███╗   ██╗ ██████╗  ██████╗")
 	cyan.Println("██╔════╝██╔═══██╗████╗  ██║██╔════╝ ██╔═══██╗")
@@ -50,6 +55,7 @@ func printMenu() {
 	color.New(color.FgHiBlack).Println("             MongoDB Docker Manager by Shubham")
 	fmt.Println()
 
+	// Menu box
 	yellow := color.New(color.FgYellow)
 	yellow.Println("┌───────────────────────────────────────────┐")
 	yellow.Println("│ Please choose an option:                  │")
@@ -65,6 +71,7 @@ func printMenu() {
 	yellow.Println("└───────────────────────────────────────────┘")
 }
 
+// handleUserInput reads user input and performs corresponding action.
 func handleUserInput() {
 	color.New(color.FgWhite, color.Bold).Print("\n▶ Enter your choice: ")
 	reader := bufio.NewReader(os.Stdin)
@@ -93,22 +100,23 @@ func handleUserInput() {
 		printError("Invalid choice. Please try again.")
 	}
 
+	// Pause before returning to menu
 	color.New(color.FgYellow).Println("\nPress Enter to return to the menu...")
 	reader.ReadString('\n')
 }
 
+// Utility functions for consistent colored messages
 func printSuccess(msg string) {
 	color.New(color.FgGreen, color.Bold).Printf("\n✔ %s\n", msg)
 }
-
 func printError(msg string) {
 	color.New(color.FgRed, color.Bold).Fprintf(os.Stderr, "\n✖ Error: %s\n", msg)
 }
-
 func printInfo(msg string) {
 	color.New(color.FgBlue, color.Bold).Printf("\nℹ %s\n", msg)
 }
 
+// executeCommand runs a shell command and streams output live.
 func executeCommand(name string, args ...string) error {
 	color.New(color.FgMagenta).Printf("▶ Executing: %s %s\n", name, strings.Join(args, " "))
 	cmd := exec.Command(name, args...)
@@ -117,6 +125,7 @@ func executeCommand(name string, args ...string) error {
 	return cmd.Run()
 }
 
+// executeAndCaptureCommand runs a shell command and returns output.
 func executeAndCaptureCommand(name string, args ...string) (string, error) {
 	color.New(color.FgMagenta).Printf("▶ Executing: %s %s\n", name, strings.Join(args, " "))
 	cmd := exec.Command(name, args...)
@@ -127,6 +136,7 @@ func executeAndCaptureCommand(name string, args ...string) (string, error) {
 	return out.String(), err
 }
 
+// isContainerRunning checks if the MongoDB container is running.
 func isContainerRunning() bool {
 	cmd := exec.Command("docker", "ps", "-q", "-f", fmt.Sprintf("name=%s", containerName))
 	output, err := cmd.Output()
@@ -137,6 +147,7 @@ func isContainerRunning() bool {
 	return len(strings.TrimSpace(string(output))) > 0
 }
 
+// startMongoDB starts the MongoDB Docker container.
 func startMongoDB() {
 	if isContainerRunning() {
 		printInfo(fmt.Sprintf("Container '%s' is already running.", containerName))
@@ -151,6 +162,7 @@ func startMongoDB() {
 	printSuccess("MongoDB container started successfully.")
 }
 
+// stopMongoDB stops and removes the MongoDB container.
 func stopMongoDB() {
 	cmd := exec.Command("docker", "ps", "-a", "-q", "-f", fmt.Sprintf("name=%s", containerName))
 	output, err := cmd.Output()
@@ -170,6 +182,7 @@ func stopMongoDB() {
 	printSuccess("MongoDB container stopped and removed successfully.")
 }
 
+// viewLogs shows live container logs until user presses Ctrl+C.
 func viewLogs() {
 	if !isContainerRunning() {
 		printError("MongoDB container is not running. Please start it first.")
@@ -182,6 +195,7 @@ func viewLogs() {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
+	// Handle Ctrl+C
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	cmdDone := make(chan bool, 1)
@@ -202,6 +216,7 @@ func viewLogs() {
 	}
 }
 
+// listDatabasesForUser lists all user-created databases.
 func listDatabasesForUser() (string, error) {
 	printInfo("Fetching available databases...")
 	listScript := `db.adminCommand({ listDatabases: 1 }).databases.forEach(db => { if(db.name !== 'local' && db.name !== 'config') print(db.name) });`
@@ -219,6 +234,7 @@ func listDatabasesForUser() (string, error) {
 	return dbList, nil
 }
 
+// addNewUser adds a new MongoDB user with readWrite role on a given DB.
 func addNewUser() {
 	if !isContainerRunning() {
 		printError("MongoDB container is not running. Please start it first.")
@@ -228,6 +244,7 @@ func addNewUser() {
 	listDatabasesForUser()
 	reader := bufio.NewReader(os.Stdin)
 
+	// Ask for username, password, database
 	fmt.Println()
 	color.New(color.FgHiWhite).Print("Enter username: ")
 	username, _ := reader.ReadString('\n')
@@ -246,6 +263,7 @@ func addNewUser() {
 		return
 	}
 
+	// MongoDB command for user creation
 	mongoCommand := fmt.Sprintf(`db.createUser({ user: '%s', pwd: '%s', roles: [{ role: 'readWrite', db: '%s' }] })`, username, password, db)
 
 	printInfo("Adding new user...")
@@ -257,6 +275,7 @@ func addNewUser() {
 	printSuccess(fmt.Sprintf("User '%s' added to database '%s' successfully.", username, db))
 }
 
+// addNewDatabase creates a new MongoDB database by making an initial collection.
 func addNewDatabase() {
 	if !isContainerRunning() {
 		printError("MongoDB container is not running. Please start it first.")
@@ -284,6 +303,7 @@ func addNewDatabase() {
 	printSuccess(fmt.Sprintf("Database '%s' created successfully.", dbName))
 }
 
+// getDatabaseInfo shows stats and users of all non-system databases.
 func getDatabaseInfo() {
 	if !isContainerRunning() {
 		printError("MongoDB container is not running. Please start it first.")
@@ -291,6 +311,7 @@ func getDatabaseInfo() {
 	}
 	printInfo("Fetching information for all databases...")
 
+	// Script to print DB stats and users
 	mongoScript := `
 		const dbs = db.adminCommand({ listDatabases: 1 }).databases;
 		dbs.forEach(dbInfo => {
@@ -323,6 +344,7 @@ func getDatabaseInfo() {
 	printSuccess("Finished retrieving database information.")
 }
 
+// getConnectionURI builds a MongoDB connection URI from user input.
 func getConnectionURI() {
 	if !isContainerRunning() {
 		printError("MongoDB container is not running. Please start it first.")
@@ -343,10 +365,12 @@ func getConnectionURI() {
 	color.New(color.FgYellow).Println("Available users:")
 	fmt.Println(userList)
 
+	// Show available DBs
 	listDatabasesForUser()
 
 	reader := bufio.NewReader(os.Stdin)
 
+	// Ask user details
 	color.New(color.FgHiWhite).Print("\nEnter user from the list above: ")
 	user, _ := reader.ReadString('\n')
 	user = strings.TrimSpace(user)
@@ -364,6 +388,7 @@ func getConnectionURI() {
 		return
 	}
 
+	// Build connection string
 	uri := fmt.Sprintf("mongodb://%s:%s@localhost:27017/%s", user, password, db)
 	printSuccess("Your connection URI is:")
 	color.New(color.FgCyan, color.Bold).Println(uri)
